@@ -5863,6 +5863,1929 @@ updateWorld = function(dt) {
 /* ============================================================
    КОНЕЦ ОБНОВЛЕНИЯ
    ============================================================ */
+/* ============================================================
+   АДАПТАЦИЯ УСТРОЙСТВ
+   + невидимый мобильный джойстик
+   + поддержка после каждого удара и завершения
+   ============================================================ */
+
+const DEVICE_UI = {
+  coarse: matchMedia('(pointer:coarse)'),
+  compact: false,
+  landscape: false,
+  lastPraise: '',
+  suppressImpactMessage: false
+};
+
+/* ---------------- АДАПТИВНЫЕ СТИЛИ ---------------- */
+
+const deviceStyles = document.createElement('style');
+
+deviceStyles.textContent = `
+/* Игровые поверхности не должны выделяться браузером. */
+#world,
+#hud,
+#controls,
+#moveZone,
+#joystick,
+#knob,
+#kick {
+  -webkit-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
+  -webkit-tap-highlight-color:transparent !important;
+}
+
+#world,
+#controls,
+#moveZone,
+#kick {
+  touch-action:none;
+}
+
+button {
+  -webkit-touch-callout:none;
+  -webkit-tap-highlight-color:transparent !important;
+}
+
+button:focus:not(:focus-visible) {
+  outline:none;
+}
+
+button:focus-visible {
+  outline:3px solid #fff2ab;
+  outline-offset:4px;
+}
+
+#overlay,
+#panel {
+  touch-action:pan-y;
+}
+
+#panel {
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+
+#hud {
+  padding-top:max(12px,env(safe-area-inset-top));
+  padding-left:max(12px,env(safe-area-inset-left));
+  padding-right:max(12px,env(safe-area-inset-right));
+}
+
+#controls {
+  --control-bottom:max(18px,env(safe-area-inset-bottom));
+  --control-right:max(16px,env(safe-area-inset-right));
+}
+
+#kick {
+  bottom:var(--control-bottom);
+  right:var(--control-right);
+}
+
+#overlay {
+  padding:
+    max(12px,env(safe-area-inset-top))
+    max(12px,env(safe-area-inset-right))
+    max(12px,env(safe-area-inset-bottom))
+    max(12px,env(safe-area-inset-left));
+}
+
+.panel {
+  max-height:calc(100dvh - 28px);
+}
+
+/* Похвала не блокирует управление. */
+#message {
+  pointer-events:none;
+  transition:opacity .2s ease;
+}
+
+#message .praiseResult {
+  display:block;
+  margin-bottom:5px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:1.1px;
+  color:#e4eff7;
+  opacity:.86;
+}
+
+#message .praiseMain {
+  display:block;
+}
+
+/* ===== ПЛАНШЕТЫ И СЕНСОРНЫЕ ЭКРАНЫ ===== */
+
+@media(pointer:coarse) {
+  /*
+    Элемент продолжает получать координаты,
+    но круг и ручка больше не рисуются.
+  */
+  #joystick,
+  #knob {
+    visibility:hidden !important;
+    opacity:0 !important;
+    border:0 !important;
+    background:none !important;
+    box-shadow:none !important;
+  }
+
+  #moveZone {
+    background:transparent !important;
+    border:0 !important;
+    outline:none !important;
+  }
+
+  #kit,
+  #hint {
+    display:none !important;
+  }
+
+  /* Постоянные инструкции больше не закрывают землю. */
+  #proximity {
+    display:none !important;
+  }
+
+  #message {
+    top:auto;
+    bottom:calc(max(18px,env(safe-area-inset-bottom)) + 162px);
+    left:50%;
+    width:min(75%,420px);
+    font-size:22px;
+    line-height:1.15;
+    -webkit-text-stroke:0;
+    text-shadow:0 2px 8px #000b;
+  }
+
+  #message small {
+    font-size:10px;
+    line-height:1.35;
+    margin-top:5px;
+  }
+
+  /* Заряд рядом с кнопкой, а не посередине ног. */
+  #charge {
+    left:auto;
+    right:var(--control-right,16px);
+    bottom:calc(max(18px,env(safe-area-inset-bottom)) + 125px);
+    width:148px;
+    transform:none;
+  }
+
+  #chargeText {
+    font-size:9px;
+    line-height:1.35;
+    min-height:23px;
+    margin-bottom:5px;
+  }
+
+  .chargeRail {
+    height:17px;
+  }
+
+  #moveZone {
+    top:112px;
+    bottom:0;
+    width:calc(100% - 132px);
+  }
+
+  .float {
+    font-size:19px;
+    top:40%;
+  }
+}
+
+/* ===== ТЕЛЕФОН ВЕРТИКАЛЬНО ===== */
+
+@media(max-width:600px) {
+  #hud {
+    padding-top:max(8px,env(safe-area-inset-top));
+    padding-left:max(9px,env(safe-area-inset-left));
+    padding-right:max(9px,env(safe-area-inset-right));
+  }
+
+  .top {
+    gap:7px;
+    align-items:center;
+  }
+
+  .money {
+    min-width:81px;
+    padding:7px 10px 7px 31px;
+    font-size:18px;
+    border-radius:10px;
+    line-height:1.1;
+  }
+
+  .money::before {
+    width:18px;
+    height:18px;
+    left:7px;
+    border-width:1px;
+  }
+
+  .actions {
+    gap:6px;
+  }
+
+  .actions button {
+    min-height:40px;
+    padding:8px 10px;
+    font-size:11px;
+    border-radius:10px;
+  }
+
+  #pauseButton {
+    min-width:42px;
+    font-size:16px;
+  }
+
+  .stats {
+    margin-top:7px;
+    gap:6px;
+  }
+
+  /*
+    Вместо трёх крупных панелей —
+    одна спокойная компактная строка.
+  */
+  .stat {
+    display:flex;
+    align-items:center;
+    gap:5px;
+    padding:4px 7px;
+    min-height:25px;
+    font-size:8px;
+    letter-spacing:0;
+    border-width:1px;
+    border-radius:7px;
+    background:#102b45ba;
+    box-shadow:none;
+  }
+
+  .stat b {
+    display:inline;
+    margin:0;
+    font-size:12px;
+    line-height:1;
+  }
+
+  body[data-game-mode="free"] #timeStat {
+    display:none;
+  }
+
+  body[data-game-mode="level"] #distanceStat,
+  body[data-game-mode="level"] #scoreStat {
+    display:none;
+  }
+
+  #goalBox {
+    position:absolute;
+    top:calc(max(8px,env(safe-area-inset-top)) + 48px);
+    left:88px;
+    right:10px;
+    max-width:none;
+    padding:6px 9px;
+    margin:0;
+    border-width:1px;
+    border-radius:8px;
+    box-shadow:none;
+    font-size:10px;
+  }
+
+  #goalBox .rail {
+    height:5px;
+    margin-top:5px;
+  }
+
+  #kit,
+  #hint,
+  #proximity {
+    display:none !important;
+  }
+
+  #kick {
+    width:90px;
+    height:84px;
+    font-size:19px;
+    border-radius:20px;
+    border-width:2px;
+  }
+
+  #kick small {
+    font-size:7px;
+    letter-spacing:.2px;
+  }
+
+  #charge {
+    left:auto;
+    right:max(14px,env(safe-area-inset-right));
+    bottom:calc(max(18px,env(safe-area-inset-bottom)) + 101px);
+    width:132px;
+    transform:none;
+  }
+
+  #chargeText {
+    font-size:9px;
+    min-height:22px;
+  }
+
+  .chargeRail {
+    height:16px;
+  }
+
+  #message {
+    top:auto;
+    bottom:calc(max(18px,env(safe-area-inset-bottom)) + 161px);
+    width:calc(100% - 44px);
+    max-width:330px;
+    font-size:20px;
+    line-height:1.15;
+    -webkit-text-stroke:0;
+    text-shadow:0 2px 8px #000b;
+  }
+
+  #message small {
+    font-size:10px;
+  }
+
+  #message .praiseResult {
+    font-size:8px;
+    margin-bottom:4px;
+  }
+
+  #moveZone {
+    top:104px;
+    bottom:0;
+    width:calc(100% - 112px);
+  }
+
+  .panel {
+    padding:19px;
+    border-radius:17px;
+    max-height:calc(100dvh - 24px);
+  }
+
+  .brand {
+    font-size:49px;
+    margin:13px 0 17px;
+  }
+
+  h2 {
+    font-size:24px;
+  }
+
+  .hero {
+    font-size:13px;
+  }
+
+  p {
+    font-size:12px;
+  }
+
+  .primary,
+  .secondary {
+    min-height:46px;
+    padding:12px;
+    font-size:13px;
+  }
+
+  .miniGrid {
+    gap:6px;
+    margin:14px 0;
+  }
+
+  .mini {
+    padding:10px 5px;
+    font-size:9px;
+  }
+
+  .mini b {
+    font-size:21px;
+  }
+
+  .tip {
+    font-size:10px;
+    padding:11px;
+    margin:13px 0;
+  }
+
+  .analyticsRow {
+    gap:10px;
+  }
+
+  .analyticsRow p {
+    font-size:9px;
+  }
+}
+
+/* ===== ТЕЛЕФОН ГОРИЗОНТАЛЬНО ===== */
+
+@media(max-height:500px) and (orientation:landscape) {
+  #hud {
+    padding-top:max(7px,env(safe-area-inset-top));
+    padding-left:max(10px,env(safe-area-inset-left));
+    padding-right:max(10px,env(safe-area-inset-right));
+  }
+
+  .top {
+    align-items:flex-start;
+  }
+
+  .money {
+    min-width:82px;
+    padding:7px 10px 7px 31px;
+    font-size:18px;
+  }
+
+  .money::before {
+    width:18px;
+    height:18px;
+    left:7px;
+  }
+
+  .actions button {
+    min-height:35px;
+    padding:7px 10px;
+    font-size:10px;
+  }
+
+  .stats {
+    position:absolute;
+    top:max(8px,env(safe-area-inset-top));
+    left:calc(max(10px,env(safe-area-inset-left)) + 96px);
+    margin:0;
+    gap:5px;
+  }
+
+  .stat {
+    display:flex;
+    align-items:center;
+    gap:5px;
+    padding:6px 8px;
+    font-size:8px;
+    border-width:1px;
+    box-shadow:none;
+    min-height:32px;
+  }
+
+  .stat b {
+    margin:0;
+    font-size:12px;
+  }
+
+  body[data-game-mode="free"] #timeStat,
+  body[data-game-mode="level"] #distanceStat,
+  body[data-game-mode="level"] #scoreStat {
+    display:none;
+  }
+
+  #goalBox {
+    position:absolute;
+    top:max(8px,env(safe-area-inset-top));
+    left:calc(max(10px,env(safe-area-inset-left)) + 179px);
+    right:175px;
+    max-width:290px;
+    margin:0;
+    padding:5px 9px;
+    border-width:1px;
+    box-shadow:none;
+    font-size:10px;
+  }
+
+  #goalBox .rail {
+    height:4px;
+    margin-top:4px;
+  }
+
+  #kit,
+  #hint,
+  #proximity {
+    display:none !important;
+  }
+
+  #kick {
+    width:82px;
+    height:75px;
+    font-size:17px;
+    border-radius:18px;
+    bottom:max(12px,env(safe-area-inset-bottom));
+  }
+
+  #kick small {
+    font-size:7px;
+  }
+
+  #charge {
+    left:auto;
+    right:calc(max(16px,env(safe-area-inset-right)) + 97px);
+    bottom:calc(max(12px,env(safe-area-inset-bottom)) + 12px);
+    width:147px;
+    transform:none;
+  }
+
+  #chargeText {
+    font-size:9px;
+    min-height:23px;
+  }
+
+  #message {
+    top:auto;
+    bottom:max(17px,env(safe-area-inset-bottom));
+    left:43%;
+    width:260px;
+    max-width:40vw;
+    font-size:18px;
+    -webkit-text-stroke:0;
+    text-shadow:0 2px 8px #000b;
+  }
+
+  #message small {
+    font-size:9px;
+  }
+
+  #message .praiseResult {
+    font-size:8px;
+    margin-bottom:3px;
+  }
+
+  #moveZone {
+    top:62px;
+    width:calc(100% - 105px);
+    bottom:0;
+  }
+
+  .panel {
+    width:min(570px,100%);
+    padding:18px 22px;
+    max-height:calc(100dvh - 20px);
+  }
+
+  .brand {
+    font-size:42px;
+    margin:11px 0 14px;
+  }
+
+  .float {
+    display:none;
+  }
+}
+
+/* Маленькие экраны: никаких повторяющихся всплывашек. */
+@media(pointer:coarse) {
+  .float {
+    display:none;
+  }
+}
+
+@media(prefers-reduced-motion:reduce) {
+  #message {
+    transition:none;
+  }
+}
+`;
+
+document.head.append(deviceStyles);
+
+/* ---------------- КОМПАКТНЫЕ ПОДПИСИ ---------------- */
+
+const deviceDistanceStat = $('meters')?.parentElement;
+const deviceScoreStat = $('points')?.parentElement;
+const deviceTimeStat = $('time')?.parentElement;
+
+if (deviceDistanceStat) deviceDistanceStat.id = 'distanceStat';
+if (deviceScoreStat) deviceScoreStat.id = 'scoreStat';
+if (deviceTimeStat) deviceTimeStat.id = 'timeStat';
+
+function setStatLabel(element, text) {
+  if (!element) return;
+
+  const textNode = Array.from(element.childNodes)
+    .find(node => node.nodeType === Node.TEXT_NODE);
+
+  if (textNode) textNode.nodeValue = text;
+}
+
+setStatLabel(deviceDistanceStat, 'Путь');
+setStatLabel(deviceScoreStat, 'Очки');
+setStatLabel(deviceTimeStat, 'Время');
+
+function updateDeviceLayout() {
+  DEVICE_UI.compact =
+    innerWidth <= 600 ||
+    (innerHeight <= 500 && innerWidth > innerHeight);
+
+  DEVICE_UI.landscape = innerWidth > innerHeight;
+
+  document.body.dataset.gameMode = mode;
+  document.body.dataset.input =
+    DEVICE_UI.coarse.matches ? 'touch' : 'pointer';
+
+  $('pauseButton').textContent =
+    DEVICE_UI.compact ? 'Ⅱ' : 'Пауза';
+
+  $('pauseButton').setAttribute('aria-label', 'Пауза');
+
+  $('shopButton').textContent =
+    mode === 'free'
+      ? DEVICE_UI.compact ? 'Билд' : 'Улучшения'
+      : 'Набор';
+
+  $('kick').setAttribute(
+    'aria-label',
+    'Удар: зажми для выбора силы и отпусти'
+  );
+
+  /*
+    После поворота телефона старый центр джойстика
+    больше не соответствует новому экрану.
+  */
+  moveAxis = 0;
+  joyId = null;
+  $('joystick').style.display = 'none';
+}
+
+window.addEventListener('resize', updateDeviceLayout);
+
+if (DEVICE_UI.coarse.addEventListener) {
+  DEVICE_UI.coarse.addEventListener(
+    'change',
+    updateDeviceLayout
+  );
+}
+
+/* Обновляем раскладку после выбора режима. */
+const deviceStartRun = startRun;
+
+startRun = function(newMode, level = null) {
+  deviceStartRun(newMode, level);
+  updateDeviceLayout();
+};
+
+const deviceHome = home;
+
+home = function() {
+  deviceHome();
+  updateDeviceLayout();
+};
+
+const deviceRefreshKit = refreshKit;
+
+refreshKit = function() {
+  deviceRefreshKit();
+
+  $('shopButton').textContent =
+    mode === 'free'
+      ? DEVICE_UI.compact ? 'Билд' : 'Улучшения'
+      : 'Набор';
+};
+
+/* ---------------- ЗАЩИТА ОТ СИНЕГО ВЫДЕЛЕНИЯ ---------------- */
+
+/*
+  Не блокируем прокрутку магазина и меню.
+  Подавление выделения действует только на игровой слой.
+*/
+function preventGameSelection(event) {
+  if (!playing || paused) return;
+  event.preventDefault();
+}
+
+$('controls').addEventListener(
+  'selectstart',
+  preventGameSelection
+);
+
+$('controls').addEventListener(
+  'dragstart',
+  preventGameSelection
+);
+
+$('world').addEventListener(
+  'selectstart',
+  preventGameSelection
+);
+
+$('moveZone').addEventListener(
+  'touchstart',
+  event => {
+    if (!playing || paused) return;
+    if (event.cancelable) event.preventDefault();
+  },
+  { passive:false }
+);
+
+$('moveZone').addEventListener(
+  'touchmove',
+  event => {
+    if (!playing || paused) return;
+    if (event.cancelable) event.preventDefault();
+  },
+  { passive:false }
+);
+
+$('kick').addEventListener(
+  'touchstart',
+  event => {
+    if (!playing || paused) return;
+    if (event.cancelable) event.preventDefault();
+  },
+  { passive:false }
+);
+
+/*
+  Если браузер уже успел создать выделение,
+  убираем его при начале нового движения.
+*/
+$('moveZone').addEventListener('pointerdown', () => {
+  if (!playing || paused) return;
+
+  const selection = window.getSelection?.();
+
+  if (selection && !selection.isCollapsed) {
+    selection.removeAllRanges();
+  }
+});
+
+/* ---------------- ПОДДЕРЖКА ПРИ КАЖДОМ УДАРЕ ---------------- */
+
+const PICKME_PRAISE = {
+  perfect: [
+    ['Ну всё, я впечатлена', 'Так точно попасть — это красиво.'],
+    ['Можно я поаплодирую?', 'Этот момент ты поймал идеально.'],
+    ['Вот за это я и болею за тебя', 'Очень точный удар.'],
+    ['Ладно, это было очаровательно', 'И сила, и момент — в самый раз.'],
+    ['Ну кто тут так умеет?', 'Ты. И только что это показал.']
+  ],
+
+  hit: [
+    ['Мне нравится твой стиль', 'Спокойно подошёл — и попал.'],
+    ['А я знала, что получится', 'Хороший контакт. Идём дальше?'],
+    ['Ну какой хороший пинок', 'Можно ещё один?'],
+    ['Я вообще-то болею за тебя', 'И этот удар мне очень понравился.'],
+    ['Не хочу отвлекать, но…', 'Ты сейчас хорошо попал.']
+  ],
+
+  miss: [
+    ['Я всё равно за тебя', 'Мимо бывает. На следующем подходе поймаем.'],
+    ['Ну и что, что мимо?', 'Ты попробовал — уже умница.'],
+    ['Можно я тебя поддержу?', 'Один промах ничего не решает.'],
+    ['Даже не думай себя ругать', 'Отойдём и попробуем ещё.'],
+    ['Мне нравится, что ты пробуешь', 'Этот удар не попал. Следующий ещё впереди.']
+  ],
+
+  overhead: [
+    ['Ну это явно не твоя вина', 'Нога прошла выше — те самые 2%.'],
+    ['Я видела: почти получилось', 'Случайный промах. Ты всё равно молодец.'],
+    ['Я на твоей стороне, если что', 'Этот случайный перелёт не считается обидным.']
+  ],
+
+  passed: [
+    ['Не торопись, я подожду', 'Предмет остался позади. Спокойно вернёмся.'],
+    ['Ничего, у нас ещё попытка', 'Чуть раньше отпустим на новом подходе.'],
+    ['Ты только не расстраивайся', 'Развернём ситуацию следующим пинком.']
+  ],
+
+  won: [
+    [
+      'Ну всё, ты меня впечатлил',
+      'Ты прошёл уровень! Я вообще-то верила в тебя с первого замаха. Очень красиво поймал ритм — можешь собой гордиться.'
+    ],
+    [
+      'Можно я первой тебя поздравлю?',
+      'Уровень твой. Ты выдержал темп, поймал моменты и довёл дело до победы. Ну какой же ты молодец.'
+    ],
+    [
+      'Вот поэтому я за тебя и болею',
+      'Ты справился с этим набором. Без случайного чуда — своими точными ударами. Правда, очень хороший результат.'
+    ]
+  ],
+
+  lost: [
+    [
+      'Я всё равно тобой довольна',
+      'Пока без победы — но ты пробовал, учился и ловил момент. Один результат не делает тебя хуже. Давай ещё раз, без спешки?'
+    ],
+    [
+      'Только не ругай себя, ладно?',
+      'Этот уровень оказался непростым. Ты уже лучше знаешь его ритм, а значит следующая попытка будет не с нуля. Я за тебя.'
+    ],
+    [
+      'А мне понравилось, что ты не сдавался',
+      'Сегодня цель не набрана — бывает. Забери опыт, выдохни и возвращайся, когда захочешь. Ты всё ещё молодец.'
+    ]
+  ],
+
+  free: [
+    [
+      'Мне понравилась наша прогулка',
+      'Ты ловил момент, пробовал разные подходы и двигался дальше. Хорошая работа. Возвращайся за ещё одним красивым пинком.'
+    ],
+    [
+      'Ну вот, уже заканчиваешь?',
+      'Ты хорошо постарался. Все заработанные монеты сохранены, а следующий забег подождёт. Можешь спокойно собой гордиться.'
+    ],
+    [
+      'Можно скажу? Ты молодец',
+      'Не каждый удар обязан быть идеальным. Мне нравится, что ты пробовал и находил свой ритм. Хорошая прогулка получилась.'
+    ]
+  ]
+};
+
+function choosePraise(category) {
+  const list = PICKME_PRAISE[category] || PICKME_PRAISE.hit;
+
+  let index = Math.floor(Math.random() * list.length);
+
+  if (
+    list.length > 1 &&
+    list[index][0] === DEVICE_UI.lastPraise
+  ) {
+    index = (index + 1) % list.length;
+  }
+
+  DEVICE_UI.lastPraise = list[index][0];
+  return list[index];
+}
+
+function escapePraiseText(text) {
+  return String(text).replace(/[&<>"']/g, char => ({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  })[char]);
+}
+
+function showPickmePraise(category, resultLabel) {
+  const [title, detail] = choosePraise(category);
+
+  const isMiss =
+    category === 'miss' ||
+    category === 'overhead' ||
+    category === 'passed';
+
+  const color = isMiss
+    ? '#ffe5d7'
+    : category === 'perfect'
+      ? '#fff0b1'
+      : '#e1f4e7';
+
+  /*
+    На телефоне оставляем результат и одну короткую реплику.
+    Длинное пояснение не заслоняет ноги.
+  */
+  const compact =
+    DEVICE_UI.coarse.matches ||
+    DEVICE_UI.compact;
+
+  $('message').innerHTML = `
+    <span class="praiseResult">
+      ${escapePraiseText(resultLabel)}
+    </span>
+    <span class="praiseMain">
+      ${escapePraiseText(title)}
+    </span>
+    ${
+      compact
+        ? ''
+        : `<small>${escapePraiseText(detail)}</small>`
+    }
+  `;
+
+  $('message').style.color = color;
+  $('message').style.opacity = 1;
+
+  messageTime = compact ? 1.55 : 2.25;
+}
+
+/*
+  Старые сообщения удара заменяем, а не выводим вторым слоем.
+  Остальные подсказки игры работают как раньше.
+*/
+const deviceSay = say;
+
+say = function(title, sub = '', color = 'white', seconds = 2) {
+  if (DEVICE_UI.suppressImpactMessage) return;
+  deviceSay(title, sub, color, seconds);
+};
+
+const deviceApplyImpact = applyImpact;
+
+applyImpact = function() {
+  DEVICE_UI.suppressImpactMessage = true;
+
+  try {
+    deviceApplyImpact();
+  } finally {
+    DEVICE_UI.suppressImpactMessage = false;
+  }
+
+  if (!shot) return;
+
+  if (pendingBack) {
+    showPickmePraise(
+      shot.overhead ? 'overhead' : 'miss',
+      shot.overhead ? 'ВЫШЕ ПРЕДМЕТА' : 'ПРОМАХ'
+    );
+  } else if (shot.perfect) {
+    showPickmePraise(
+      'perfect',
+      'ИДЕАЛЬНЫЙ УДАР'
+    );
+  } else {
+    showPickmePraise(
+      'hit',
+      'ПОПАДАНИЕ'
+    );
+  }
+};
+
+/*
+  Если игрок просто прошёл предмет без удара,
+  тоже поддерживаем его, но не дублируем похвалу
+  после обычного промаха ногой.
+*/
+const deviceBeginRetreat = beginRetreat;
+
+beginRetreat = function() {
+  const missedByPassing = phase === 'walk';
+
+  deviceBeginRetreat();
+
+  if (missedByPassing) {
+    showPickmePraise(
+      'passed',
+      'ПРЕДМЕТ ПОЗАДИ'
+    );
+  }
+};
+
+/* ---------------- ПОДДЕРЖКА В КОНЦЕ ---------------- */
+
+/*
+  Не переписываем расчёт наград, аналитику и обработчики кнопок.
+  Меняем только текст уже созданного экрана результата.
+*/
+const deviceEndRun = endRun;
+
+endRun = function(won = false) {
+  const wasPlaying = playing;
+  const completedMode = mode;
+
+  deviceEndRun(won);
+
+  if (!wasPlaying) return;
+
+  const category = completedMode === 'level'
+    ? won ? 'won' : 'lost'
+    : 'free';
+
+  const [title, description] = choosePraise(category);
+
+  const resultPanel = $('panel');
+  const heading = resultPanel.querySelector('h2');
+  const hero = resultPanel.querySelector('.hero');
+
+  /*
+    Заголовок исхода остаётся однозначным:
+    проигрыш не называем победой.
+  */
+  if (heading) {
+    heading.textContent = completedMode === 'level'
+      ? won ? 'Уровень пройден' : 'Попытка завершена'
+      : 'Прогулка завершена';
+  }
+
+  if (hero) {
+    hero.innerHTML = '';
+
+    const lead = document.createElement('strong');
+    lead.textContent = title;
+    lead.style.display = 'block';
+    lead.style.marginBottom = '9px';
+    lead.style.color = '#fff0b5';
+
+    const body = document.createElement('span');
+    body.textContent = description;
+
+    hero.append(lead, body);
+  }
+
+  const again = $('again');
+
+  if (
+    again &&
+    completedMode === 'level' &&
+    !won
+  ) {
+    again.textContent = 'Ещё попытка? Я за тебя';
+  }
+};
+
+/* Первичная настройка размеров. */
+updateDeviceLayout();
+
+/* ============================================================
+   КОНЕЦ ОБНОВЛЕНИЯ
+   ============================================================ */
+/* ============================================================
+   PINATNOGOI
+   Мягкий комиксный интерфейс + женский род + розовые облачка
+   Требует предыдущих обновлений.
+   ============================================================ */
+
+document.title = 'PINATNOGOI — поймай свой ритм';
+
+const PINAT_THEME = {
+  name: 'PINATNOGOI',
+  bubbleDurationMobile: 1.85,
+  bubbleDurationDesktop: 2.5
+};
+
+/* ---------------- НАЗВАНИЕ И ОБРАЩЕНИЯ ---------------- */
+
+/*
+  Заменяем только текстовые узлы.
+  Обработчики кнопок, вложенные элементы и события сохраняются.
+*/
+function pinatFeminineText(text) {
+  const replacements = [
+    ['ПИНОК!', 'PINATNOGOI'],
+    ['Пинок!', 'PINATNOGOI'],
+
+    ['ты меня впечатлил', 'ты меня впечатлила'],
+    ['Ты меня впечатлил', 'Ты меня впечатлила'],
+    ['ты прошёл', 'ты прошла'],
+    ['Ты прошёл', 'Ты прошла'],
+    ['ты справился', 'ты справилась'],
+    ['Ты справился', 'Ты справилась'],
+    ['ты выдержал', 'ты выдержала'],
+    ['Ты выдержал', 'Ты выдержала'],
+    ['ты попробовал', 'ты попробовала'],
+    ['Ты попробовал', 'Ты попробовала'],
+    ['ты пробовал', 'ты пробовала'],
+    ['Ты пробовал', 'Ты пробовала'],
+    ['ты поймал', 'ты поймала'],
+    ['Ты поймал', 'Ты поймала'],
+    ['ты попал', 'ты попала'],
+    ['Ты попал', 'Ты попала'],
+    ['ты постарался', 'ты постаралась'],
+    ['Ты постарался', 'Ты постаралась'],
+    ['ты не сдавался', 'ты не сдавалась'],
+    ['Ты не сдавался', 'Ты не сдавалась'],
+    ['ты довёл', 'ты довела'],
+    ['Ты довёл', 'Ты довела'],
+    ['ты был', 'ты была'],
+    ['Ты был', 'Ты была'],
+
+    ['ты сейчас хорошо попал', 'ты сейчас хорошо попала'],
+    ['Ты сейчас хорошо попал', 'Ты сейчас хорошо попала'],
+    ['поймал ритм', 'поймала ритм'],
+    ['поймал момент', 'поймала момент'],
+    ['подошёл', 'подошла'],
+    ['Подошёл', 'Подошла'],
+    ['Сначала выровняйся', 'Сначала выровняйся'],
+
+    ['чемпион!', 'чемпионка!'],
+    ['Чемпион!', 'Чемпионка!'],
+    ['какой же ты молодец', 'какая же ты умница'],
+    ['Какой же ты молодец', 'Какая же ты умница']
+  ];
+
+  let result = text;
+
+  for (const [from, to] of replacements) {
+    result = result.split(from).join(to);
+  }
+
+  return result;
+}
+
+function pinatPolishText(root) {
+  if (!root) return;
+
+  const walker = document.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT
+  );
+
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  for (const node of nodes) {
+    const replacement = pinatFeminineText(node.nodeValue);
+
+    if (replacement !== node.nodeValue) {
+      node.nodeValue = replacement;
+    }
+  }
+
+  root.querySelectorAll?.('.brand').forEach(element => {
+    if (element.textContent !== PINAT_THEME.name) {
+      element.textContent = PINAT_THEME.name;
+    }
+
+    element.setAttribute('aria-label', PINAT_THEME.name);
+  });
+}
+
+const pinatPreviousPanel = panel;
+
+panel = function(html) {
+  pinatPreviousPanel(html);
+  pinatPolishText($('panel'));
+};
+
+/*
+  Некоторые экраны меняют текст уже после вызова panel().
+  Отслеживаем такие изменения без пересоздания интерфейса.
+*/
+const pinatPanelObserver = new MutationObserver(() => {
+  pinatPolishText($('panel'));
+});
+
+pinatPanelObserver.observe($('panel'), {
+  childList: true,
+  characterData: true,
+  subtree: true
+});
+
+/* ---------------- НОВЫЕ ПОХВАЛЫ ---------------- */
+
+Object.assign(PICKME_PRAISE, {
+  perfect: [
+    [
+      'Ну какая же ты умница!',
+      'Так красиво поймала момент.'
+    ],
+    [
+      'Ты была великолепна',
+      'Идеальная сила. Идеальный момент.'
+    ],
+    [
+      'Можно я поаплодирую?',
+      'Ты попала прямо в идеальную область.'
+    ],
+    [
+      'Ну всё, я впечатлена',
+      'Ты сейчас очень красиво справилась.'
+    ],
+    [
+      'Вот это моя чемпионка',
+      'Как же точно ты поймала этот удар!'
+    ],
+    [
+      'Ты сияешь, между прочим',
+      'Очень точный и уверенный пинок.'
+    ]
+  ],
+
+  hit: [
+    [
+      'Попала, умница!',
+      'Мне очень нравится твой ритм.'
+    ],
+    [
+      'А я в тебя верила',
+      'Ты подошла и отлично попала.'
+    ],
+    [
+      '67',
+      '=)'
+    ],
+    [
+      'У тебя красиво получается',
+      'Спокойно, уверенно и прямо в предмет.'
+    ],
+    [
+      'Мне нравится твой стиль',
+      'Ты поймала хороший момент.'
+    ],
+    [
+      'Можно ещё один такой?',
+      'Ты сейчас здорово попала.'
+    ]
+  ],
+
+  miss: [
+    [
+      'Ты всё равно умница',
+      'Не попала — бывает. Попробуем ещё?'
+    ],
+    [
+      'Только не ругай себя',
+      'Один промах ничего не решает.'
+    ],
+    [
+      'Я всё равно за тебя',
+      'На следующем подходе поймаешь момент.'
+    ],
+    [
+      'Ты старалась, я видела',
+      'Чуть-чуть мимо. Спокойно вернёмся.'
+    ],
+    [
+      'Ничего, моя хорошая',
+      'Отойдём и дадим себе ещё попытку.'
+    ],
+    [
+      'Мне нравится твоя смелость',
+      'Ты попробовала. Это уже шаг вперёд.'
+    ]
+  ],
+
+  overhead: [
+    [
+      'Это не ты, это те самые 2%',
+      'Нога прошла выше. Ты всё равно умница.'
+    ],
+    [
+      'Я видела: ты старалась',
+      'Случайный перелёт. Давай ещё раз.'
+    ],
+    [
+      'Я на твоей стороне',
+      'Нога прошла выше предмета. Бывает.'
+    ]
+  ],
+
+  passed: [
+    [
+      'Не спеши, моя хорошая',
+      'Ты прошла мимо. Спокойно вернёмся.'
+    ],
+    [
+      'У нас есть ещё попытка',
+      'На новом подходе отпустишь чуть раньше.'
+    ],
+    [
+      'Ты только не расстраивайся',
+      'Вернёмся и поймаем твой момент.'
+    ]
+  ],
+
+  won: [
+    [
+      'Ну какая же ты умница!',
+      'Ты прошла уровень! Поймала ритм, справилась с набором и довела дело до победы. Я очень за тебя рада — можешь собой гордиться.'
+    ],
+    [
+      'Можно я первой тебя поздравлю?',
+      'Ты была великолепна. Не каждый удар был обязан быть идеальным, но ты нашла свой темп и справилась. Очень красивая победа.'
+    ],
+    [
+      'Вот она, моя чемпионка',
+      'Ты выдержала темп, поймала нужные моменты и набрала цель. Это твоя работа и твоя победа. Какая же ты молодец.'
+    ]
+  ],
+
+  lost: [
+    [
+      'Ты всё равно моя умница',
+      'В этот раз ты не набрала цель — и это нормально. Ты пробовала, замечала ошибки и училась чувствовать момент. Я всё равно за тебя. Попробуем ещё, без спешки?'
+    ],
+    [
+      'Только не ругай себя, ладно?',
+      'Ты старалась, и это видно. Этот набор оказался непростым, но теперь ты лучше знаешь его ритм. Следующая попытка будет уже с новым опытом.'
+    ],
+    [
+      'Мне нравится, что ты попробовала',
+      'Сегодня без победы, но не без прогресса. Ты уже сделала шаг вперёд. Выдохни, отдохни и возвращайся, когда захочешь.'
+    ]
+  ],
+
+  free: [
+    [
+      'Мне понравилась наша прогулка',
+      'Ты пробовала разные подходы, ловила моменты и находила свой ритм. Хорошая работа, умница. Все заработанные монеты сохранены.'
+    ],
+    [
+      'Ну какая ты молодец',
+      'Ты хорошо постаралась. Идеальные удары, смешные промахи и новые попытки — всё это часть твоего пути. Возвращайся, когда захочешь.'
+    ],
+    [
+      'Можно скажу? Ты чудесно справилась',
+      'Не каждый удар должен быть идеальным. Ты двигалась дальше и пробовала снова. Надеюсь, эта маленькая прогулка тебя порадовала.'
+    ],
+    [
+      '67',
+      '=)'
+    ]
+  ]
+});
+
+/* ---------------- МЯГКАЯ КОМИКСНАЯ ТЕМА ---------------- */
+
+const pinatStyles = document.createElement('style');
+
+pinatStyles.textContent = `
+:root {
+  --yellow:#ffe5a5;
+  --cyan:#bbe9e2;
+  --pink:#ffd2e0;
+  --muted:#d1e5f5;
+}
+
+/*
+  Используем системные округлые шрифты:
+  нет дополнительной загрузки или внешнего запроса.
+*/
+html,body,button {
+  font-family:
+    ui-rounded,
+    "SF Pro Rounded",
+    "Arial Rounded MT Bold",
+    "Trebuchet MS",
+    Arial,
+    sans-serif;
+}
+
+.panel {
+  background-color:#4d80b6;
+  border-color:#304f78;
+  box-shadow:
+    inset 0 3px #d4edff77,
+    inset 0 -5px #376391,
+    0 7px 0 #2b466d,
+    0 24px 70px #172b4559;
+}
+
+.eyebrow {
+  color:#e0efff;
+  letter-spacing:1.4px;
+  font-size:9px;
+  text-shadow:0 1px #456586;
+}
+
+.brand {
+  display:block;
+  max-width:100%;
+  margin:22px 0 21px;
+  color:#ffe0eb;
+  font-size:clamp(27px,7.6vw,47px);
+  line-height:1.12;
+  letter-spacing:-1.6px;
+  font-weight:1000;
+  white-space:nowrap;
+  transform:rotate(-2deg);
+  -webkit-text-stroke:1px #71546e;
+  text-shadow:
+    0 3px 0 #a67491,
+    0 6px 0 #304c74;
+}
+
+h2 {
+  color:#fff3f7;
+  text-shadow:0 2px #45678c;
+}
+
+.hero {
+  color:#fff5f8;
+  font-weight:650;
+}
+
+p {
+  color:#edf4fc;
+}
+
+.pill {
+  background:linear-gradient(#729ecf,#4d7db4);
+  border-color:#345379;
+  box-shadow:
+    inset 0 2px #d3edff77,
+    inset 0 -3px #3f689c77,
+    0 3px #304d73;
+}
+
+.money {
+  color:#fff0be;
+  text-shadow:0 2px #7c6946;
+}
+
+.actions button {
+  text-shadow:0 1px #456286;
+}
+
+.stat {
+  background:#32547bc9;
+  border-color:#304c6d;
+  color:#d3e5f6;
+  box-shadow:none;
+}
+
+.stat b {
+  text-shadow:0 1px #34516d;
+}
+
+.primary,.primary.pink {
+  border-color:#a6824b;
+  background:linear-gradient(#fff0c5,#ffe0a0 48%,#edbf77);
+  color:#705032;
+  text-shadow:0 1px #fff7df;
+  box-shadow:
+    inset 0 3px #fff8dd,
+    inset 0 -4px #d8a768,
+    0 4px #8c6945;
+}
+
+.primary:hover,.primary.pink:hover {
+  background:linear-gradient(#fff6dc,#ffe9b8 48%,#f3cc8b);
+}
+
+.secondary {
+  background:linear-gradient(#f8d8e6,#e6afc7);
+  border-color:#906c88;
+  color:#644563;
+  text-shadow:0 1px #fff1f7;
+  box-shadow:
+    inset 0 2px #fff3f9,
+    inset 0 -3px #cc91ad,
+    0 3px #795a77;
+}
+
+.secondary:hover {
+  background:linear-gradient(#ffe6ef,#efbfd3);
+}
+
+.tip {
+  color:#edf2fa;
+  background:#365f8c8c;
+  border-color:#345881;
+  box-shadow:inset 0 1px #d6eaff20;
+}
+
+.mini {
+  background:linear-gradient(#79a0cb,#5b85b5);
+  border-color:#3d628c;
+  color:#edf4ff;
+  box-shadow:inset 0 2px #d7eaff66,0 2px #355b87;
+}
+
+.mini b {
+  color:#fff0c8;
+  text-shadow:0 2px #817058;
+}
+
+.tabs {
+  background:#375c88;
+  border-color:#305178;
+}
+
+.tabs button {
+  background:#527dab;
+  color:#e4efff;
+}
+
+.tabs button.active {
+  background:linear-gradient(#ffe1ed,#e8b5cc);
+  color:#755069;
+  box-shadow:inset 0 2px #fff1f7,0 2px #a27793;
+}
+
+.item {
+  background:linear-gradient(#f1edf5,#d8e1ef);
+  border-color:#567498;
+  box-shadow:inset 0 2px #fff,0 3px #365980;
+}
+
+.item.current {
+  border-color:#ffd4e5;
+  background:linear-gradient(#fff0f7,#e9e7f2);
+  box-shadow:0 0 0 1px #ab83a0,inset 0 2px #fff;
+}
+
+.info b {
+  color:#4b526d;
+}
+
+.info small {
+  color:#6a7590;
+}
+
+.num {
+  background:linear-gradient(#c5b5e9,#9b88c7);
+  border-color:#7b6a9b;
+  color:#fff;
+  text-shadow:0 1px #7a6999;
+  box-shadow:inset 0 2px #f0e4ff88;
+}
+
+.buy {
+  background:linear-gradient(#dbf0c6,#b3d498);
+  border-color:#7c9c6a;
+  color:#4b6540;
+  box-shadow:inset 0 2px #f1ffe5,0 2px #6d895d;
+}
+
+#kick {
+  color:#745131;
+  border-color:#99754a;
+  background:linear-gradient(#fff2ca,#ffe0a0 48%,#edbf77);
+  text-shadow:0 1px #fff8de;
+  box-shadow:
+    inset 0 3px #fff9df,
+    inset 0 -4px #d1a165,
+    0 5px #876545,
+    0 8px 18px #0002;
+}
+
+#kick.held {
+  background:linear-gradient(#ffe6b5,#ecc080);
+  box-shadow:
+    inset 0 2px #fff7dc,
+    inset 0 -2px #d1a165,
+    0 2px #876545;
+}
+
+.chargeRail {
+  border-color:#706584;
+  background:#384865c9;
+  box-shadow:0 2px #34425d;
+}
+
+#chargeFill {
+  background:linear-gradient(#ffe4f0,#e8afcf)!important;
+  box-shadow:inset 0 2px #fff1f8aa;
+}
+
+.sweet {
+  background:#fff0b850;
+  border-color:#fff2c1;
+}
+
+.sweet::after {
+  background:#fffbed;
+  box-shadow:0 0 6px #fff0be;
+}
+
+#chargeText {
+  color:#fff1f7!important;
+  text-shadow:0 1px 5px #334562;
+}
+
+/*
+  Убираем дублирующую всплывающую надпись.
+  Похвала теперь показывается одним облачком.
+*/
+.float {
+  display:none!important;
+}
+
+/* ---------------- ОБЛАЧКО ---------------- */
+
+#message {
+  --bubble-width:310px;
+
+  position:absolute;
+  top:calc(max(12px,env(safe-area-inset-top)) + 119px);
+  bottom:auto;
+  left:50%;
+  transform:translateX(-50%);
+
+  width:max-content;
+  max-width:min(var(--bubble-width),calc(100vw - 42px));
+
+  padding:12px 18px 13px;
+
+  background:linear-gradient(155deg,#fff4f8,#ffdeec);
+  border:2px solid #bd91ad;
+  border-radius:24px 29px 23px 27px;
+
+  box-shadow:
+    inset 0 2px #ffffffd9,
+    0 3px 0 #966f8c55,
+    0 5px 15px #20334a24;
+
+  color:#77516c!important;
+  font-size:17px;
+  line-height:1.28;
+  font-weight:800;
+  letter-spacing:-.25px;
+  text-align:center;
+  text-shadow:none;
+  -webkit-text-stroke:0;
+
+  pointer-events:none;
+  isolation:isolate;
+}
+
+/* Маленький комиксный хвостик. */
+#message::after {
+  content:"";
+  position:absolute;
+  left:28px;
+  bottom:-7px;
+  width:12px;
+  height:12px;
+  background:#ffe3ee;
+  border-right:2px solid #bd91ad;
+  border-bottom:2px solid #bd91ad;
+  border-radius:0 0 4px 0;
+  transform:rotate(45deg);
+  z-index:-1;
+}
+
+#message:empty {
+  display:none;
+}
+
+#message .praiseMain {
+  position:relative;
+  display:block;
+  color:#77516c;
+}
+
+#message .praiseResult {
+  display:block;
+  margin:0 0 4px;
+  color:#9b718d;
+  font-size:8px;
+  line-height:1.2;
+  font-weight:800;
+  letter-spacing:.8px;
+  opacity:1;
+}
+
+#message small {
+  display:block;
+  margin-top:5px;
+  color:#8a6780;
+  font-size:11px;
+  line-height:1.35;
+  font-weight:600;
+  letter-spacing:0;
+  text-shadow:none;
+}
+
+#message[data-praise-kind="perfect"] {
+  background:linear-gradient(145deg,#fff5fa,#ffe2eb 70%,#fff0d6);
+  border-color:#bc91a9;
+}
+
+#message[data-praise-kind="miss"],
+#message[data-praise-kind="overhead"],
+#message[data-praise-kind="passed"] {
+  background:linear-gradient(145deg,#fff5fa,#f0e4f6);
+  border-color:#b49bbc;
+}
+
+#message[data-praise-kind="miss"]::after,
+#message[data-praise-kind="overhead"]::after,
+#message[data-praise-kind="passed"]::after {
+  background:#f3e7f6;
+  border-color:#b49bbc;
+}
+
+#message.bubbleArrive {
+  animation:pinatBubbleIn .2s ease-out;
+}
+
+@keyframes pinatBubbleIn {
+  from {
+    transform:translate(-50%,4px) scale(.97);
+  }
+  to {
+    transform:translate(-50%,0) scale(1);
+  }
+}
+
+.analyticsTitle {
+  color:#fbeaf4;
+}
+
+.analyticsRow p {
+  color:#d9e8f6;
+}
+
+footer {
+  color:#d0e3f5;
+}
+
+/* Телефон: облачко ниже счётчиков, но не в зоне ног и удара. */
+@media(max-width:600px) {
+  .brand {
+    font-size:clamp(25px,7.5vw,39px);
+    letter-spacing:-1.1px;
+    margin:17px 0 19px;
+    -webkit-text-stroke:.8px #71546e;
+  }
+
+  #message {
+    --bubble-width:265px;
+
+    top:calc(max(8px,env(safe-area-inset-top)) + 91px);
+    bottom:auto;
+    left:50%;
+
+    max-width:calc(100vw - 48px);
+    padding:9px 14px 10px;
+
+    font-size:14px;
+    line-height:1.25;
+    border-radius:20px 24px 20px 23px;
+    border-width:1.5px;
+  }
+
+  #message .praiseResult {
+    font-size:7px;
+    margin-bottom:3px;
+    letter-spacing:.6px;
+  }
+
+  #message small {
+    font-size:9px;
+    line-height:1.3;
+    margin-top:4px;
+  }
+
+  #message::after {
+    width:9px;
+    height:9px;
+    bottom:-6px;
+    left:24px;
+    border-width:1.5px;
+  }
+}
+
+/* Планшет: тоже верхняя зона, не нижние органы управления. */
+@media(pointer:coarse) and (min-width:601px) {
+  #message {
+    top:calc(max(12px,env(safe-area-inset-top)) + 116px);
+    bottom:auto;
+    font-size:16px;
+    --bubble-width:295px;
+  }
+}
+
+/* Горизонтальный телефон: короткое облачко под верхней строкой. */
+@media(max-height:500px) and (orientation:landscape) {
+  #message {
+    top:calc(max(7px,env(safe-area-inset-top)) + 49px);
+    bottom:auto;
+    left:50%;
+
+    width:max-content;
+    max-width:min(285px,52vw);
+
+    font-size:13px;
+    padding:7px 13px 8px;
+    border-radius:18px 22px 18px 20px;
+  }
+
+  #message .praiseResult {
+    font-size:7px;
+    margin-bottom:2px;
+  }
+
+  #message small {
+    display:none;
+  }
+
+  .brand {
+    font-size:36px;
+    margin:12px 0 16px;
+  }
+}
+
+@media(prefers-reduced-motion:reduce) {
+  #message.bubbleArrive {
+    animation:none;
+  }
+}
+`;
+
+document.head.append(pinatStyles);
+
+/* ---------------- ПОКАЗ ОБЛАЧКА ---------------- */
+
+function pinatAnimateBubble() {
+  const element = $('message');
+
+  element.classList.remove('bubbleArrive');
+
+  if (!reducedMotion) {
+    // Перезапускаем короткую анимацию только при новой реплике.
+    void element.offsetWidth;
+    element.classList.add('bubbleArrive');
+  }
+}
+
+showPickmePraise = function(category, resultLabel) {
+  const [title, detail] = choosePraise(category);
+
+  const compact =
+    DEVICE_UI.coarse.matches ||
+    DEVICE_UI.compact;
+
+  const resultLabels = {
+    perfect:'ИДЕАЛЬНО',
+    hit:'ПОПАЛА',
+    miss:'ЧУТЬ МИМО',
+    overhead:'ВЫШЕ ПРЕДМЕТА',
+    passed:'ВЕРНЁМСЯ К ПРЕДМЕТУ'
+  };
+
+  const label = resultLabels[category] || resultLabel;
+
+  $('message').dataset.praiseKind = category;
+
+  $('message').innerHTML = `
+    <span class="praiseResult">
+      ${escapePraiseText(label)}
+    </span>
+    <span class="praiseMain">
+      ${escapePraiseText(title)}
+    </span>
+    ${
+      compact
+        ? ''
+        : `<small>${escapePraiseText(detail)}</small>`
+    }
+  `;
+
+  $('message').style.opacity = 1;
+
+  messageTime = compact
+    ? PINAT_THEME.bubbleDurationMobile
+    : PINAT_THEME.bubbleDurationDesktop;
+
+  pinatAnimateBubble();
+};
+
+/*
+  Обычные подсказки тоже получают мягкое оформление,
+  но сохраняют свои исходные функции и смысл.
+*/
+const pinatPreviousSay = say;
+
+say = function(title, sub = '', color = 'white', seconds = 2) {
+  if (DEVICE_UI.suppressImpactMessage) return;
+
+  const message = $('message');
+
+  message.dataset.praiseKind = 'hint';
+
+  pinatPreviousSay(
+    pinatFeminineText(title),
+    pinatFeminineText(sub),
+    color,
+    seconds
+  );
+
+  pinatAnimateBubble();
+};
+
+/* ---------------- ЭКРАН РЕЗУЛЬТАТА ---------------- */
+
+/*
+  Предыдущий endRun уже выбирает реплики из PICKME_PRAISE.
+  Мы заменили словарь выше, поэтому начисление наград
+  и отправку метрик переписывать не требуется.
+*/
+const pinatPreviousEndRun = endRun;
+
+endRun = function(won = false) {
+  const wasPlaying = playing;
+
+  pinatPreviousEndRun(won);
+
+  if (!wasPlaying) return;
+
+  pinatPolishText($('panel'));
+
+  const introduction = $('panel').querySelector('.hero strong');
+
+  if (introduction) {
+    introduction.style.display = 'block';
+    introduction.style.padding = '12px 14px';
+    introduction.style.marginBottom = '13px';
+    introduction.style.borderRadius = '19px 23px 18px 22px';
+    introduction.style.background =
+      'linear-gradient(145deg,#fff2f8,#ffdfec)';
+    introduction.style.border = '2px solid #bd91ad';
+    introduction.style.boxShadow =
+      'inset 0 2px #fff,0 3px #30476622';
+    introduction.style.color = '#79546f';
+    introduction.style.textShadow = 'none';
+    introduction.style.fontSize = '16px';
+    introduction.style.lineHeight = '1.35';
+  }
+};
+
+/* ---------------- ПЕРВИЧНОЕ ПРИМЕНЕНИЕ ---------------- */
+
+$('message').setAttribute('aria-live', 'polite');
+$('message').setAttribute('aria-atomic', 'true');
+
+pinatPolishText($('panel'));
+pinatPolishText($('hud'));
+
+/* ============================================================
+   КОНЕЦ ОБНОВЛЕНИЯ PINATNOGOI
+   ============================================================ */
 let previous=performance.now(),saveClock=0;
 function frame(now){
  requestAnimationFrame(frame);
