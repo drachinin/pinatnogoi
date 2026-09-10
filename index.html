@@ -8878,6 +8878,416 @@ if (audio) {
 /* ============================================================
    КОНЕЦ COMFORT & POLISH
    ============================================================ */
+/* ============================================================
+   PINATNOGOI — указатель потерявшегося предмета
+   Камера не меняется. Управление не перекрывается.
+   ============================================================ */
+
+const itemPointerStyle = document.createElement('style');
+
+itemPointerStyle.textContent = `
+#itemPointer {
+  position:fixed;
+  left:0;
+  top:0;
+  z-index:12;
+
+  width:49px;
+  height:64px;
+
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+
+  pointer-events:none;
+  user-select:none;
+  -webkit-user-select:none;
+  -webkit-tap-highlight-color:transparent;
+
+  opacity:0;
+  visibility:hidden;
+  transform:translate(-50%,-50%);
+  transition:opacity .18s ease,visibility .18s ease;
+}
+
+#itemPointer.isVisible {
+  opacity:1;
+  visibility:visible;
+}
+
+.itemPointerBadge {
+  position:relative;
+  display:grid;
+  place-items:center;
+
+  width:43px;
+  height:43px;
+  flex:none;
+
+  border:1px solid #bf9aae;
+  border-radius:16px 18px 15px 18px;
+
+  background:
+    radial-gradient(ellipse at 30% 0%,#ffffffcc,transparent 65%),
+    linear-gradient(145deg,#fff0f7,#eed5e4);
+
+  box-shadow:
+    inset 0 0 0 3px #ffffff24,
+    inset 0 1px #fff,
+    0 2px #92738c55,
+    0 4px 11px #24374c24;
+}
+
+.itemPointerBadge::after {
+  content:"";
+  position:absolute;
+  right:4px;
+  top:4px;
+
+  width:4px;
+  height:4px;
+  border-radius:50%;
+
+  background:#fff8dc;
+  box-shadow:0 0 0 1px #c9ac783d;
+}
+
+#itemPointerArrow {
+  display:block;
+  width:28px;
+  height:28px;
+  transform-origin:center;
+  filter:drop-shadow(0 1px 0 #ffffffa6);
+}
+
+#itemPointerDistance {
+  margin-top:4px;
+  padding:2px 6px 3px;
+  border:1px solid #ffffff20;
+  border-radius:7px;
+
+  color:#fff2d7;
+  background:#344761d9;
+
+  font-family:ui-rounded,"Trebuchet MS",Arial,sans-serif;
+  font-size:10px;
+  font-weight:800;
+  line-height:1.2;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+
+  box-shadow:0 1px 3px #182b3d33;
+}
+
+@media(max-width:600px) {
+  #itemPointer {
+    width:43px;
+    height:58px;
+  }
+
+  .itemPointerBadge {
+    width:37px;
+    height:37px;
+    border-radius:14px 16px 13px 16px;
+  }
+
+  #itemPointerArrow {
+    width:25px;
+    height:25px;
+  }
+
+  #itemPointerDistance {
+    font-size:9px;
+  }
+}
+
+@media(max-height:500px) and (orientation:landscape) {
+  #itemPointer {
+    width:41px;
+    height:53px;
+  }
+
+  .itemPointerBadge {
+    width:34px;
+    height:34px;
+    border-radius:12px 14px 12px 14px;
+  }
+
+  #itemPointerArrow {
+    width:23px;
+    height:23px;
+  }
+}
+
+@media(prefers-reduced-motion:reduce) {
+  #itemPointer {
+    transition:none;
+  }
+}
+`;
+
+document.head.append(itemPointerStyle);
+
+const itemPointer = document.createElement('div');
+itemPointer.id = 'itemPointer';
+itemPointer.setAttribute('aria-hidden', 'true');
+
+itemPointer.innerHTML = `
+  <div class="itemPointerBadge">
+    <svg
+      id="itemPointerArrow"
+      viewBox="0 0 32 32"
+      fill="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient
+          id="pinatPointerGold"
+          x1="16" y1="3"
+          x2="16" y2="29"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stop-color="#FFF3CB"/>
+          <stop offset=".55" stop-color="#F0D095"/>
+          <stop offset="1" stop-color="#DDB37C"/>
+        </linearGradient>
+      </defs>
+
+      <path
+        d="
+          M16 3
+          C16.7 3 17.1 3.5 17.5 4.1
+          L27 17.8
+          C28 19.3 26.7 20.9 25.1 20.3
+          L19.6 18.2
+          L19.6 27
+          C19.6 28.2 18.7 29 17.6 29
+          L14.4 29
+          C13.3 29 12.4 28.2 12.4 27
+          L12.4 18.2
+          L6.9 20.3
+          C5.3 20.9 4 19.3 5 17.8
+          L14.5 4.1
+          C14.9 3.5 15.3 3 16 3 Z
+        "
+        fill="url(#pinatPointerGold)"
+        stroke="#92718C"
+        stroke-width="1.6"
+        stroke-linejoin="round"
+      />
+
+      <path
+        d="M16 7 L22.1 16"
+        stroke="#FFF9E5"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        opacity=".9"
+      />
+    </svg>
+  </div>
+
+  <div id="itemPointerDistance">Предмет</div>
+`;
+
+document.body.append(itemPointer);
+
+const ITEM_POINTER = {
+  projected: V(),
+  cameraSpace: V(),
+  wasVisible: false,
+  distanceElement: document.getElementById('itemPointerDistance'),
+  arrowElement: document.getElementById('itemPointerArrow')
+};
+
+function hideItemPointer() {
+  itemPointer.classList.remove('isVisible');
+  ITEM_POINTER.wasVisible = false;
+}
+
+function updateItemPointer() {
+  if (!playing || paused) {
+    hideItemPointer();
+    return;
+  }
+
+  /*
+    Используем фактическую ориентацию камеры после всех
+    обновлений комфортного режима.
+  */
+  camera.updateMatrixWorld(true);
+
+  ITEM_POINTER.cameraSpace
+    .copy(objectPos)
+    .applyMatrix4(camera.matrixWorldInverse);
+
+  ITEM_POINTER.projected
+    .copy(objectPos)
+    .project(camera);
+
+  const view = ITEM_POINTER.cameraSpace;
+  const ndc = ITEM_POINTER.projected;
+
+  const inFront = view.z < -.035;
+  const validProjection =
+    Number.isFinite(ndc.x) &&
+    Number.isFinite(ndc.y);
+
+  /*
+    Небольшой запас у края экрана.
+    Разные пороги включения и выключения предотвращают мигание.
+  */
+  const visibleLimit = ITEM_POINTER.wasVisible ? .80 : .91;
+
+  const clearlyOnScreen =
+    inFront &&
+    validProjection &&
+    Math.abs(ndc.x) < visibleLimit &&
+    Math.abs(ndc.y) < visibleLimit &&
+    ndc.z >= -1 &&
+    ndc.z <= 1;
+
+  if (clearlyOnScreen) {
+    hideItemPointer();
+    return;
+  }
+
+  const width = innerWidth;
+  const height = innerHeight;
+
+  const landscapePhone =
+    height <= 500 && width > height;
+
+  const compact =
+    width <= 600 ||
+    matchMedia('(pointer:coarse)').matches;
+
+  /*
+    Направление в экранных координатах.
+    Для предмета за камерой используем координаты камеры,
+    чтобы стрелка не показывала зеркально неверную сторону.
+  */
+  let dx;
+  let dy;
+
+  if (inFront && validProjection) {
+    dx = ndc.x * width * .5;
+    dy = -ndc.y * height * .5;
+  } else {
+    dx = view.x;
+    dy = -view.y;
+
+    // Если предмет практически точно позади — стрелка вниз.
+    if (Math.hypot(dx, dy) < .01) {
+      dx = 0;
+      dy = 1;
+    }
+  }
+
+  const length = Math.hypot(dx, dy);
+
+  if (!Number.isFinite(length) || length < .0001) {
+    hideItemPointer();
+    return;
+  }
+
+  dx /= length;
+  dy /= length;
+
+  /*
+    Рабочая рамка:
+    сверху оставляем место HUD и облачку,
+    снизу — заряду и кнопке.
+  */
+  const hudStyle = getComputedStyle($('hud'));
+
+  const safeLeft = parseFloat(hudStyle.paddingLeft) || 10;
+  const safeRight = parseFloat(hudStyle.paddingRight) || 10;
+  const safeTop = parseFloat(hudStyle.paddingTop) || 10;
+
+  const left = safeLeft + 25;
+  const right = width - safeRight - 25;
+
+  const top = landscapePhone
+    ? safeTop + 110
+    : compact
+      ? safeTop + 168
+      : safeTop + 190;
+
+  const bottom = landscapePhone
+    ? height - 116
+    : height - (compact ? 185 : 190);
+
+  /*
+    На очень низком экране сокращаем рамку,
+    но не даём ей перевернуться.
+  */
+  const minY = Math.min(top, height * .43);
+  const maxY = Math.max(bottom, minY + 28);
+
+  const centerX = width * .5;
+  const centerY = clamp(height * .5, minY, maxY);
+
+  const tx = Math.abs(dx) > .0001
+    ? (dx > 0 ? right - centerX : left - centerX) / dx
+    : Infinity;
+
+  const ty = Math.abs(dy) > .0001
+    ? (dy > 0 ? maxY - centerY : minY - centerY) / dy
+    : Infinity;
+
+  const edgeDistance = Math.max(0, Math.min(tx, ty));
+
+  const x = clamp(centerX + dx * edgeDistance, left, right);
+  const y = clamp(centerY + dy * edgeDistance, minY, maxY);
+
+  /*
+    SVG нарисован направленным вверх:
+    +90° переводит atan2 в нужную ориентацию.
+  */
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+
+  itemPointer.style.left = x.toFixed(1) + 'px';
+  itemPointer.style.top = y.toFixed(1) + 'px';
+
+  ITEM_POINTER.arrowElement.style.transform =
+    'rotate(' + angle.toFixed(1) + 'deg)';
+
+  const distance = Math.hypot(
+    objectPos.x - player.x,
+    objectPos.z - player.z
+  );
+
+  const distanceText = distance < 10
+    ? distance.toFixed(1).replace('.', ',') + ' м'
+    : Math.round(distance) + ' м';
+
+  if (ITEM_POINTER.distanceElement.textContent !== distanceText) {
+    ITEM_POINTER.distanceElement.textContent = distanceText;
+  }
+
+  itemPointer.classList.add('isVisible');
+  ITEM_POINTER.wasVisible = true;
+}
+
+const pointerPreviousWorld = updateWorld;
+
+updateWorld = function(dt) {
+  pointerPreviousWorld(dt);
+  updateItemPointer();
+};
+
+/* Сразу скрываем при открытии меню, не ожидая следующего кадра. */
+const pointerPreviousPanel = panel;
+
+panel = function(html) {
+  hideItemPointer();
+  pointerPreviousPanel(html);
+};
+
+/* ============================================================
+   КОНЕЦ УКАЗАТЕЛЯ ПРЕДМЕТА
+   ============================================================ */
 let previous=performance.now(),saveClock=0;
 function frame(now){
  requestAnimationFrame(frame);
