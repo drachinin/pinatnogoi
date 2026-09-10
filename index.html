@@ -9288,6 +9288,513 @@ panel = function(html) {
 /* ============================================================
    КОНЕЦ УКАЗАТЕЛЯ ПРЕДМЕТА
    ============================================================ */
+/* ============================================================
+   PINATNOGOI — обычная камера по умолчанию
+   Короткий пинок НЕ поднимает взгляд.
+   Требует предыдущих обновлений.
+   ============================================================ */
+
+const storedCameraMode = safeLocalGet(COMFORT_KEYS.camera);
+
+COMFORT.cameraMode = ['classic', 'calm', 'down'].includes(
+  storedCameraMode
+)
+  ? storedCameraMode
+  : 'classic';
+
+const CLASSIC_FOLLOW = {
+  active: false,
+  blend: 0,
+  quietTime: 0,
+  initialized: false,
+  previousElapsed: 0,
+  previousPlaying: false,
+  previousMode: COMFORT.cameraMode,
+
+  look: V(),
+
+  // Подъём разрешён только когда предмет достаточно далеко.
+  startDistance: 6.5,
+
+  // Возвращаем взгляд вниз перед новым подходом.
+  returnDistance: 3.1
+};
+
+function cameraModeLabel() {
+  return {
+    classic: 'Обычная',
+    calm: 'Спокойная',
+    down: 'Только вниз'
+  }[COMFORT.cameraMode] || 'Обычная';
+}
+
+/* ---------------- НАСТРОЙКИ ---------------- */
+
+const classicComfortHTML = comfortSettingsHTML;
+
+comfortSettingsHTML = function() {
+  const holder = document.createElement('div');
+  holder.innerHTML = classicComfortHTML();
+
+  const button = holder.querySelector('#comfortCamera');
+
+  if (button) {
+    button.textContent = cameraModeLabel();
+
+    const row = button.closest('.comfortRow');
+    const note = row?.querySelector('.comfortNote');
+
+    if (note) {
+      note.textContent =
+        'Короткие пинки не поднимают взгляд. Нажми для смены режима.';
+    }
+  }
+
+  return holder.innerHTML;
+};
+
+const classicBindComfort = bindComfortSettings;
+
+bindComfortSettings = function() {
+  classicBindComfort();
+
+  const button = $('comfortCamera');
+  if (!button) return;
+
+  button.textContent = cameraModeLabel();
+
+  button.onclick = () => {
+    const modes = ['classic', 'calm', 'down'];
+    const current = modes.indexOf(COMFORT.cameraMode);
+
+    COMFORT.cameraMode = modes[(current + 1) % modes.length];
+
+    safeLocalSet(
+      COMFORT_KEYS.camera,
+      COMFORT.cameraMode
+    );
+
+    button.textContent = cameraModeLabel();
+
+    CLASSIC_FOLLOW.active = false;
+    CLASSIC_FOLLOW.quietTime = 0;
+
+    if (COMFORT.cameraMode === 'down') {
+      COMFORT.tracking = false;
+    }
+  };
+};
+
+/* ---------------- СОПРОВОЖДЕНИЕ ---------------- */
+
+const classicPreviousWorld = updateWorld;
+
+updateWorld = function(dt) {
+  const state = CLASSIC_FOLLOW;
+
+  /*
+    Сохраняем итоговую ориентацию предыдущего кадра:
+    это позволяет не прыгать камерой при смене настройки.
+  */
+  const previousDirection = V();
+  camera.getWorldDirection(previousDirection);
+
+  const previousPosition = camera.position.clone();
+
+  classicPreviousWorld(dt);
+
+  const restarted =
+    !state.initialized ||
+    elapsed < state.previousElapsed ||
+    playing !== state.previousPlaying;
+
+  const changedMode =
+    state.previousMode !== COMFORT.cameraMode;
+
+  state.previousElapsed = elapsed;
+  state.previousPlaying = playing;
+  state.previousMode = COMFORT.cameraMode;
+
+  if (restarted) {
+    state.initialized = true;
+    state.active = false;
+    state.blend = 0;
+    state.quietTime = 0;
+
+    state.look.set(
+      player.x,
+      .065,
+      player.z - .29 - .55
+    );
+  } else if (changedMode) {
+    state.look
+      .copy(previousPosition)
+      .addScaledVector(previousDirection, 4);
+
+    state.active = false;
+    state.blend = 0;
+    state.quietTime = 0;
+  }
+
+  /*
+    Спокойную и фиксированную камеру продолжает
+    обслуживать предыдущее обновление.
+    Системная настройка уменьшения движения тоже сохраняется.
+  */
+  if (
+    COMFORT.cameraMode !== 'classic' ||
+    reducedMotion
+  ) {
+    return;
+  }
+
+  const activeFrame = playing && !paused;
+  const delta = activeFrame ? Math.min(dt, .05) : 0;
+
+  const distanceAhead = gap();
+  const speed = velocity.length();
+
+  if (
+    activeFrame &&
+    !state.active &&
+    lookFlight &&
+    phase !== 'back' &&
+    distanceAhead >= state.startDistance &&
+    speed > 1.2
+  ) {
+    state.active = true;
+    state.quietTime = 0;
+  }
+
+  if (delta > 0 && state.active) {
+    state.quietTime = speed < .25
+      ? state.quietTime + delta
+      : 0;
+
+    if (
+      phase === 'back' ||
+      distanceAhead < state.returnDistance ||
+      state.quietTime > .9
+    ) {
+      state.active = false;
+    }
+  }
+
+  const down = V(
+    player.x,
+    .065,
+    player.z - .29 - .55
+  );
+
+  const follow = V(
+    objectPos.x + pov.lastShotDirection.x * .8,
+    Math.max(.15, objectPos.y * .55),
+    objectPos.z + pov.lastShotDirection.z * 1.2
+  );
+
+  if (delta > 0) {
+    /*
+      Прежнее, более отзывчивое сопровождение:
+      без медленного ограничения скорости поворота.
+    */
+    state.blend = povDamp(
+      state.blend,
+      state.active ? 1 : 0,
+      state.active ? 4.3 : 3.5,
+      delta
+    );
+
+    const target = down.clone().lerp(follow, state.blend);
+
+    state.look.lerp(
+      target,
+      1 - Math.exp(-delta * 13)
+    );
+  } else if (!playing) {
+    state.look.copy(down);
+    state.blend = 0;
+  }
+
+  camera.position.set(
+    player.x,
+    1.60,
+    player.z - .29
+  );
+
+  camera.up.set(0, 1, 0);
+  camera.lookAt(state.look);
+
+  // Возвращаем сопровождение, но не тряску и изменение FOV.
+  gaze.copy(state.look);
+  naturalPOV.gaze.copy(state.look);
+  naturalPOV.cameraPosition.copy(camera.position);
+
+  cameraLift = state.blend;
+  naturalPOV.follow = state.blend;
+
+  /*
+    Синхронизация для плавного перехода обратно
+    в спокойный режим.
+  */
+  const direction = V();
+  camera.getWorldDirection(direction);
+
+  COMFORT.pitch = Math.asin(clamp(-direction.y, -1, 1));
+  COMFORT.yaw = Math.atan2(direction.x, -direction.z);
+
+  sky.position.copy(camera.position);
+
+  // Стрелку пересчитываем после окончательного поворота камеры.
+  updateItemPointer();
+};
+
+/* Перенос координат в длинном бесконечном забеге. */
+const classicPreviousGame = updateGame;
+
+updateGame = function(dt) {
+  const before = player.z;
+
+  classicPreviousGame(dt);
+
+  if (player.z - before > 500) {
+    CLASSIC_FOLLOW.look.z += 1000;
+  }
+};
+
+/* ============================================================
+   КОНЕЦ ОБНОВЛЕНИЯ
+   ============================================================ */
+/* ============================================================
+   PINATNOGOI — исправление завершения уровня
+   + обычная камера без бокового разворота
+   ============================================================ */
+
+/* ---------------- БЕЗОПАСНАЯ ЗАМЕНА ОБРАЩЕНИЙ ---------------- */
+
+/*
+  Останавливаем наблюдатель на время замены обработчика.
+  Сам наблюдатель ниже подключается обратно.
+*/
+pinatPanelObserver.disconnect();
+
+const SAFE_FEMININE_REPLACEMENTS = [
+  ['ПИНОК!', 'PINATNOGOI'],
+  ['Пинок!', 'PINATNOGOI'],
+
+  ['ты меня впечатлил', 'ты меня впечатлила'],
+  ['Ты меня впечатлил', 'Ты меня впечатлила'],
+
+  ['ты прошёл', 'ты прошла'],
+  ['Ты прошёл', 'Ты прошла'],
+
+  ['ты справился', 'ты справилась'],
+  ['Ты справился', 'Ты справилась'],
+
+  ['ты выдержал', 'ты выдержала'],
+  ['Ты выдержал', 'Ты выдержала'],
+
+  ['ты попробовал', 'ты попробовала'],
+  ['Ты попробовал', 'Ты попробовала'],
+
+  ['ты пробовал', 'ты пробовала'],
+  ['Ты пробовал', 'Ты пробовала'],
+
+  ['ты поймал', 'ты поймала'],
+  ['Ты поймал', 'Ты поймала'],
+
+  ['ты попал', 'ты попала'],
+  ['Ты попал', 'Ты попала'],
+
+  ['ты постарался', 'ты постаралась'],
+  ['Ты постарался', 'Ты постаралась'],
+
+  ['ты не сдавался', 'ты не сдавалась'],
+  ['Ты не сдавался', 'Ты не сдавалась'],
+
+  ['ты довёл', 'ты довела'],
+  ['Ты довёл', 'Ты довела'],
+
+  ['ты был', 'ты была'],
+  ['Ты был', 'Ты была'],
+
+  ['ты сейчас хорошо попал', 'ты сейчас хорошо попала'],
+  ['Ты сейчас хорошо попал', 'Ты сейчас хорошо попала'],
+
+  ['поймал ритм', 'поймала ритм'],
+  ['поймал момент', 'поймала момент'],
+
+  ['подошёл', 'подошла'],
+  ['Подошёл', 'Подошла'],
+
+  ['чемпион!', 'чемпионка!'],
+  ['Чемпион!', 'Чемпионка!'],
+
+  ['какой же ты молодец', 'какая же ты умница'],
+  ['Какой же ты молодец', 'Какая же ты умница']
+];
+
+function escapePinatRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const SAFE_FEMININE_RULES = SAFE_FEMININE_REPLACEMENTS.map(
+  ([from, to]) => ({
+    /*
+      Проверяем границы буквенного слова.
+
+      "ты попал" подходит.
+      "ты попала" уже НЕ подходит.
+      Обычный \\b для русского текста здесь не используем.
+    */
+    expression: new RegExp(
+      '(^|[^\\p{L}\\p{M}])' +
+      escapePinatRegex(from) +
+      '(?![\\p{L}\\p{M}])',
+      'gu'
+    ),
+    replacement: to
+  })
+);
+
+pinatFeminineText = function(text) {
+  let result = String(text ?? '');
+
+  for (const rule of SAFE_FEMININE_RULES) {
+    result = result.replace(
+      rule.expression,
+      (_, prefix) => prefix + rule.replacement
+    );
+  }
+
+  return result;
+};
+
+/*
+  Записываем текст обратно в DOM исключительно тогда,
+  когда он действительно изменился.
+*/
+pinatPolishText = function(root) {
+  if (!root) return;
+
+  const walker = document.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT
+  );
+
+  const nodes = [];
+
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode);
+  }
+
+  for (const node of nodes) {
+    const original = node.nodeValue;
+    const updated = pinatFeminineText(original);
+
+    if (updated !== original) {
+      node.nodeValue = updated;
+    }
+  }
+
+  root.querySelectorAll?.('.brand').forEach(element => {
+    if (element.textContent !== PINAT_THEME.name) {
+      element.textContent = PINAT_THEME.name;
+    }
+
+    if (
+      element.getAttribute('aria-label') !== PINAT_THEME.name
+    ) {
+      element.setAttribute('aria-label', PINAT_THEME.name);
+    }
+  });
+};
+
+pinatPolishText($('panel'));
+pinatPolishText($('hud'));
+
+pinatPanelObserver.observe($('panel'), {
+  childList: true,
+  characterData: true,
+  subtree: true
+});
+
+/* ---------------- КАМЕРА БЕЗ БОКОВОГО ПОВОРОТА ---------------- */
+
+const straightCameraPreviousWorld = updateWorld;
+
+const straightCameraDirection = V();
+const straightCameraTarget = V();
+
+updateWorld = function(dt) {
+  straightCameraPreviousWorld(dt);
+
+  /*
+    Меняем только обычный режим.
+    Спокойный режим и "Только вниз" остаются прежними.
+  */
+  if (
+    COMFORT.cameraMode !== 'classic' ||
+    reducedMotion
+  ) {
+    return;
+  }
+
+  /*
+    Берём уже рассчитанный угол подъёма взгляда,
+    но убираем горизонтальный разворот.
+
+    Таким образом сохраняются:
+    — прежняя скорость подъёма;
+    — порог дальнего пинка;
+    — плавный возврат вниз;
+    — отсутствие подъёма при коротком ударе.
+  */
+  camera.getWorldDirection(straightCameraDirection);
+
+  const pitch = Math.asin(
+    clamp(-straightCameraDirection.y, -1, 1)
+  );
+
+  camera.position.set(
+    player.x,
+    1.60,
+    player.z - .29
+  );
+
+  straightCameraTarget.set(
+    camera.position.x,
+    camera.position.y - Math.sin(pitch) * 8,
+    camera.position.z - Math.cos(pitch) * 8
+  );
+
+  camera.up.set(0, 1, 0);
+  camera.lookAt(straightCameraTarget);
+
+  /*
+    Синхронизируем предыдущие слои камеры:
+    их старые боковые цели не должны накапливаться.
+  */
+  gaze.copy(straightCameraTarget);
+
+  naturalPOV.gaze.copy(straightCameraTarget);
+  naturalPOV.cameraPosition.copy(camera.position);
+
+  CLASSIC_FOLLOW.look.x = camera.position.x;
+
+  COMFORT.pitch = pitch;
+  COMFORT.yaw = 0;
+
+  shake = 0;
+
+  sky.position.copy(camera.position);
+
+  // Указатель использует окончательную ориентацию камеры.
+  updateItemPointer();
+};
+
+/* ============================================================
+   КОНЕЦ ИСПРАВЛЕНИЯ
+   ============================================================ */
 let previous=performance.now(),saveClock=0;
 function frame(now){
  requestAnimationFrame(frame);
